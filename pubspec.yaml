@@ -1,0 +1,52 @@
+name: eftekad
+description: "Application mobile pour l'église copte orthodoxe Eftekad."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^3.3.2
+  go_router: ^17.5.0
+  flutter_localizations:
+    sdk: flutter
+  supabase_flutter: ^2.17.2
+  image_picker: ^1.2.3
+  shared_preferences: ^2.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/image/1.jpg"
+  web:
+    generate: true
+    image_path: "assets/image/1.jpg"
+    background_color: "#161616"
+    theme_color: "#D4AF37"
+  windows:
+    generate: true
+    image_path: "assets/image/1.jpg"
+    icon_size: 256
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/image/dco.webp
+    - assets/image/draveil.jpg
+    - assets/image/logo1.png
+    - assets/image/logo.webp
+    - assets/image/marie.jpg
+    - assets/image/1.jpg

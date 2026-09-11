@@ -1,0 +1,35 @@
+{
+    "name": "eftekad",
+    "short_name": "eftekad",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#161616",
+    "theme_color": "#D4AF37",
+    "description": "Application pour l'église copte orthodoxe Eftekad.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "assets/image/1.jpg"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "assets/image/1.jpg"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "assets/image/1.jpg",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "assets/image/1.jpg",
+            "purpose": "maskable"
+        }
+    ]
+}
