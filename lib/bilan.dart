@@ -41,6 +41,126 @@ class _BilanScreenState extends State<BilanScreen> {
     final now = DateTime.now();
     _selectedMonthIndex = 0; // 0 = Tous les mois par défaut
     _selectedYear = now.year < 2026 ? 2026 : (now.year > 2099 ? 2099 : now.year);
+    _checkAndApplySeptemberPromotion();
+  }
+
+  /// Vérifie et applique le passage automatique de classe en rentrée de septembre
+  Future<void> _checkAndApplySeptemberPromotion() async {
+    try {
+      final now = DateTime.now();
+      // On détermine l'année scolaire de rentrée (ex: septembre 2026 -> 2026, janvier 2027 -> 2026)
+      final int currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
+
+      final response = await Supabase.instance.client.from('enfants').select();
+      if (response == null) return;
+
+      final List<dynamic> children = response as List<dynamic>;
+
+      for (var child in children) {
+        final id = child['id'];
+        final String? fullLevel = child['niveau_classe'];
+        final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
+
+        // Si l'enfant n'a pas encore été promu pour l'année scolaire actuelle
+        if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
+          final String newLevel = _getPromotedClassLevel(fullLevel);
+
+          if (newLevel != fullLevel) {
+            await Supabase.instance.client.from('enfants').update({
+              'niveau_classe': newLevel,
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          } else {
+            // Même si pas de changement de classe (ex: déjà en Terminale), on met à jour l'année de vérification
+            await Supabase.instance.client.from('enfants').update({
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          }
+        }
+      }
+    } catch (_) {
+      // Traitement silencieux
+    }
+  }
+
+  /// Calcule la classe supérieure en conservant le jour et ajustant le cycle si besoin
+  String _getPromotedClassLevel(String currentFullLevel) {
+    final parts = currentFullLevel.split(' ');
+    if (parts.length < 2) return currentFullLevel;
+
+    final String day = parts[0]; // Samedi ou Dimanche
+    String cycle = '';
+    String level = '';
+
+    if (parts.length >= 3) {
+      cycle = parts[1];
+      level = parts.sublist(2).join(' ');
+    } else {
+      level = parts[1];
+    }
+
+    String newCycle = cycle;
+    String newLevel = level;
+
+    // MATERNELLE
+    if (level == 'PS') {
+      newLevel = 'MS';
+      newCycle = 'Maternelle';
+    } else if (level == 'MS') {
+      newLevel = 'GS';
+      newCycle = 'Maternelle';
+    } else if (level == 'GS') {
+      newLevel = 'CP';
+      newCycle = 'Primaire';
+    }
+    // PRIMAIRE
+    else if (level == 'CP') {
+      newLevel = 'CE1';
+      newCycle = 'Primaire';
+    } else if (level == 'CE1') {
+      newLevel = 'CE2';
+      newCycle = 'Primaire';
+    } else if (level == 'CE2') {
+      newLevel = 'CM1';
+      newCycle = 'Primaire';
+    } else if (level == 'CM1') {
+      newLevel = 'CM2';
+      newCycle = 'Primaire';
+    } else if (level == 'CM2') {
+      newLevel = '6ème';
+      newCycle = 'Collège';
+    }
+    // COLLÈGE
+    else if (level == '6ème') {
+      newLevel = '5ème';
+      newCycle = 'Collège';
+    } else if (level == '5ème') {
+      newLevel = '4ème';
+      newCycle = 'Collège';
+    } else if (level == '4ème') {
+      newLevel = '3ème';
+      newCycle = 'Collège';
+    } else if (level == '3ème') {
+      newLevel = 'Seconde';
+      newCycle = 'Lycée';
+    }
+    // LYCÉE
+    else if (level == 'Seconde') {
+      newLevel = 'Première';
+      newCycle = 'Lycée';
+    } else if (level == 'Première') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    } else if (level == 'Terminale') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    }
+
+    if (newCycle.isNotEmpty) {
+      return '$day $newCycle $newLevel';
+    } else {
+      return '$day $newLevel';
+    }
   }
 
   List<int> get _availableYears {
@@ -89,7 +209,7 @@ class _BilanScreenState extends State<BilanScreen> {
         padding: const EdgeInsets.symmetric(vertical: 40),
         child: Center(
           child: Text(
-            'Aucun enfant inscrit pour le $dayName.',
+            'Aucun enfant ou jeune inscrit pour le $dayName.',
             style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             textAlign: TextAlign.center,
           ),

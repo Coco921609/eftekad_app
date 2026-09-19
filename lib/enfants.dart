@@ -42,6 +42,128 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
       .stream(primaryKey: ['id'])
       .order('created_at', ascending: false);
 
+  @override
+  void initState() {
+    super.initState();
+    _checkAndApplySeptemberPromotion();
+  }
+
+  /// Vérifie et applique le passage automatique de classe en rentrée de septembre
+  Future<void> _checkAndApplySeptemberPromotion() async {
+    try {
+      final now = DateTime.now();
+      final int currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
+
+      final response = await Supabase.instance.client.from('enfants').select();
+      if (response == null) return;
+
+      final List<dynamic> children = response as List<dynamic>;
+
+      for (var child in children) {
+        final id = child['id'];
+        final String? fullLevel = child['niveau_classe'];
+        final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
+
+        if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
+          final String newLevel = _getPromotedClassLevel(fullLevel);
+
+          if (newLevel != fullLevel) {
+            await Supabase.instance.client.from('enfants').update({
+              'niveau_classe': newLevel,
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          } else {
+            await Supabase.instance.client.from('enfants').update({
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          }
+        }
+      }
+    } catch (_) {
+      // Gestion silencieuse
+    }
+  }
+
+  /// Calcule la classe supérieure en conservant le jour et ajustant le cycle si besoin
+  String _getPromotedClassLevel(String currentFullLevel) {
+    final parts = currentFullLevel.split(' ');
+    if (parts.length < 2) return currentFullLevel;
+
+    final String day = parts[0]; // Samedi ou Dimanche
+    String cycle = '';
+    String level = '';
+
+    if (parts.length >= 3) {
+      cycle = parts[1];
+      level = parts.sublist(2).join(' ');
+    } else {
+      level = parts[1];
+    }
+
+    String newCycle = cycle;
+    String newLevel = level;
+
+    // MATERNELLE
+    if (level == 'PS') {
+      newLevel = 'MS';
+      newCycle = 'Maternelle';
+    } else if (level == 'MS') {
+      newLevel = 'GS';
+      newCycle = 'Maternelle';
+    } else if (level == 'GS') {
+      newLevel = 'CP';
+      newCycle = 'Primaire';
+    }
+    // PRIMAIRE
+    else if (level == 'CP') {
+      newLevel = 'CE1';
+      newCycle = 'Primaire';
+    } else if (level == 'CE1') {
+      newLevel = 'CE2';
+      newCycle = 'Primaire';
+    } else if (level == 'CE2') {
+      newLevel = 'CM1';
+      newCycle = 'Primaire';
+    } else if (level == 'CM1') {
+      newLevel = 'CM2';
+      newCycle = 'Primaire';
+    } else if (level == 'CM2') {
+      newLevel = '6ème';
+      newCycle = 'Collège';
+    }
+    // COLLÈGE
+    else if (level == '6ème') {
+      newLevel = '5ème';
+      newCycle = 'Collège';
+    } else if (level == '5ème') {
+      newLevel = '4ème';
+      newCycle = 'Collège';
+    } else if (level == '4ème') {
+      newLevel = '3ème';
+      newCycle = 'Collège';
+    } else if (level == '3ème') {
+      newLevel = 'Seconde';
+      newCycle = 'Lycée';
+    }
+    // LYCÉE
+    else if (level == 'Seconde') {
+      newLevel = 'Première';
+      newCycle = 'Lycée';
+    } else if (level == 'Première') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    } else if (level == 'Terminale') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    }
+
+    if (newCycle.isNotEmpty) {
+      return '$day $newCycle $newLevel';
+    } else {
+      return '$day $newLevel';
+    }
+  }
+
   void _navigateToDay(BuildContext context, String day) {
     Navigator.push(
       context,

@@ -20,6 +20,131 @@ class _HomeScreenState extends State<HomeScreen> {
       .stream(primaryKey: ['id'])
       .order('created_at', ascending: false);
 
+  @override
+  void initState() {
+    super.initState();
+    _checkAndApplySeptemberPromotion();
+  }
+
+  /// Vérifie et applique le passage automatique de classe en rentrée de septembre
+  Future<void> _checkAndApplySeptemberPromotion() async {
+    try {
+      final now = DateTime.now();
+      // On détermine l'année scolaire de rentrée (ex: septembre 2026 -> 2026, janvier 2027 -> 2026)
+      final int currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
+
+      final response = await Supabase.instance.client.from('enfants').select();
+      if (response == null) return;
+
+      final List<dynamic> children = response as List<dynamic>;
+
+      for (var child in children) {
+        final id = child['id'];
+        final String? fullLevel = child['niveau_classe'];
+        final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
+
+        // Si l'enfant n'a pas encore été promu pour l'année scolaire actuelle
+        if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
+          final String newLevel = _getPromotedClassLevel(fullLevel);
+
+          if (newLevel != fullLevel) {
+            await Supabase.instance.client.from('enfants').update({
+              'niveau_classe': newLevel,
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          } else {
+            // Même si pas de changement de classe (ex: déjà en Terminale), on met à jour l'année de vérification
+            await Supabase.instance.client.from('enfants').update({
+              'derniere_annee_promotion': currentAcademicYear,
+            }).eq('id', id);
+          }
+        }
+      }
+    } catch (_) {
+      // Gestion silencieuse pour ne pas perturber l'expérience utilisateur
+    }
+  }
+
+  /// Calcule la classe supérieure en conservant le jour et ajustant le cycle si besoin
+  String _getPromotedClassLevel(String currentFullLevel) {
+    final parts = currentFullLevel.split(' ');
+    if (parts.length < 2) return currentFullLevel;
+
+    final String day = parts[0]; // Samedi ou Dimanche
+    String cycle = '';
+    String level = '';
+
+    if (parts.length >= 3) {
+      cycle = parts[1];
+      level = parts.sublist(2).join(' ');
+    } else {
+      level = parts[1];
+    }
+
+    String newCycle = cycle;
+    String newLevel = level;
+
+    // MATERNELLE
+    if (level == 'PS') {
+      newLevel = 'MS';
+      newCycle = 'Maternelle';
+    } else if (level == 'MS') {
+      newLevel = 'GS';
+      newCycle = 'Maternelle';
+    } else if (level == 'GS') {
+      newLevel = 'CP';
+      newCycle = 'Primaire';
+    }
+    // PRIMAIRE
+    else if (level == 'CP') {
+      newLevel = 'CE1';
+      newCycle = 'Primaire';
+    } else if (level == 'CE1') {
+      newLevel = 'CE2';
+      newCycle = 'Primaire';
+    } else if (level == 'CE2') {
+      newLevel = 'CM1';
+      newCycle = 'Primaire';
+    } else if (level == 'CM1') {
+      newLevel = 'CM2';
+      newCycle = 'Primaire';
+    } else if (level == 'CM2') {
+      newLevel = '6ème';
+      newCycle = 'Collège';
+    }
+    // COLLÈGE
+    else if (level == '6ème') {
+      newLevel = '5ème';
+      newCycle = 'Collège';
+    } else if (level == '5ème') {
+      newLevel = '4ème';
+      newCycle = 'Collège';
+    } else if (level == '4ème') {
+      newLevel = '3ème';
+      newCycle = 'Collège';
+    } else if (level == '3ème') {
+      newLevel = 'Seconde';
+      newCycle = 'Lycée';
+    }
+    // LYCÉE
+    else if (level == 'Seconde') {
+      newLevel = 'Première';
+      newCycle = 'Lycée';
+    } else if (level == 'Première') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    } else if (level == 'Terminale') {
+      newLevel = 'Terminale';
+      newCycle = 'Lycée';
+    }
+
+    if (newCycle.isNotEmpty) {
+      return '$day $newCycle $newLevel';
+    } else {
+      return '$day $newLevel';
+    }
+  }
+
   void _openAddChildModal(BuildContext context, {Map<String, dynamic>? childData}) {
     showModalBottomSheet(
       context: context,
@@ -187,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 24),
                 const Text(
-                  'Enfants inscrits',
+                  'Enfants ou Jeunes inscrits',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -463,7 +588,8 @@ class _AddChildFormState extends State<AddChildForm> {
 
   File? _imageFile;
   String? _selectedDay;
-  String? _selectedLevel;
+  String? _selectedCycle; // Maternelle, Primaire, etc.
+  String? _selectedLevel; // PS, MS, CP, etc.
   bool _isLoading = false;
 
   String? _selectedBirthDay;
@@ -471,15 +597,26 @@ class _AddChildFormState extends State<AddChildForm> {
   String? _selectedBirthYear;
 
   final List<String> _daysList = ['Samedi', 'Dimanche'];
+  final List<String> _cyclesList = ['Maternelle', 'Primaire', 'Collège', 'Lycée'];
 
   final List<String> _birthDaysList = List.generate(31, (index) => (index + 1).toString().padLeft(2, '0'));
   final List<String> _birthMonthsList = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
   final List<String> _birthYearsList = List.generate(100, (index) => (2000 + index).toString());
 
-  Map<String, List<String>> get _levelsMap => {
-    'Samedi': ['PS/MS', 'GS/CP', 'CE1/CE2', 'CM1/CM2', '6e/5e', '4e/3e', 'Lycéen'],
-    'Dimanche': ['PS/MS', 'GS', 'CP', 'CE1/CE2', 'CM1/CM2', '6e/5e', '4e/3e', 'Lycéen'],
+  final Map<String, List<String>> _classesParCycle = {
+    'Maternelle': ['PS', 'MS', 'GS'],
+    'Primaire': ['CP', 'CE1', 'CE2', 'CM1', 'CM2'],
+    'Collège': ['6ème', '5ème', '4ème', '3ème'],
+    'Lycée': ['Seconde', 'Première', 'Terminale'],
   };
+
+  String _getCycleForClass(String classe) {
+    if (['PS', 'MS', 'GS'].contains(classe)) return 'Maternelle';
+    if (['CP', 'CE1', 'CE2', 'CM1', 'CM2'].contains(classe)) return 'Primaire';
+    if (['6ème', '5ème', '4ème', '3ème'].contains(classe)) return 'Collège';
+    if (['Seconde', 'Première', 'Terminale'].contains(classe)) return 'Lycée';
+    return '';
+  }
 
   @override
   void initState() {
@@ -503,15 +640,36 @@ class _AddChildFormState extends State<AddChildForm> {
     String initialPhone = widget.childData?['telephone'] ?? '+33';
     _telephoneController = TextEditingController(text: initialPhone);
 
+    // Récupération intelligente du niveau et du cycle enregistré
     final niveauClasse = widget.childData?['niveau_classe'] as String?;
     if (niveauClasse != null && niveauClasse.isNotEmpty) {
       final parts = niveauClasse.split(' ');
       if (parts.isNotEmpty && _daysList.contains(parts[0])) {
         _selectedDay = parts[0];
         if (parts.length > 1) {
-          final lvl = parts.sublist(1).join(' ');
-          if (_levelsMap[_selectedDay]!.contains(lvl)) {
-            _selectedLevel = lvl;
+          String rest = parts.sublist(1).join(' ').trim();
+          String foundCycle = '';
+          String foundClass = rest;
+
+          // On vérifie si le cycle était déjà enregistré dans la base
+          for (var cycle in _cyclesList) {
+            if (rest.startsWith(cycle)) {
+              foundCycle = cycle;
+              foundClass = rest.replaceFirst(cycle, '').trim();
+              break;
+            }
+          }
+
+          // Rétrocompatibilité (si la DB contient juste "Samedi PS")
+          if (foundCycle.isEmpty) {
+            foundCycle = _getCycleForClass(foundClass);
+          }
+
+          if (_cyclesList.contains(foundCycle)) {
+            _selectedCycle = foundCycle;
+            if (_classesParCycle[foundCycle]!.contains(foundClass)) {
+              _selectedLevel = foundClass;
+            }
           }
         }
       }
@@ -592,10 +750,10 @@ class _AddChildFormState extends State<AddChildForm> {
       );
       return;
     }
-    if (_selectedDay == null || _selectedLevel == null) {
+    if (_selectedDay == null || _selectedCycle == null || _selectedLevel == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Veuillez sélectionner le jour et le niveau de classe'),
+          content: Text('Veuillez sélectionner le jour, le cycle et le niveau de classe'),
         ),
       );
       return;
@@ -617,7 +775,7 @@ class _AddChildFormState extends State<AddChildForm> {
             .getPublicUrl(path);
       }
 
-      final fullClassLevel = '$_selectedDay $_selectedLevel';
+      final fullClassLevel = '$_selectedDay $_selectedCycle $_selectedLevel';
       final formattedBirthDate = '$_selectedBirthDay/$_selectedBirthMonth/$_selectedBirthYear';
 
       String rawPhone = _telephoneController.text.trim();
@@ -626,6 +784,9 @@ class _AddChildFormState extends State<AddChildForm> {
       if (!cleanPhone.startsWith('+')) {
         cleanPhone = '+33$cleanPhone';
       }
+
+      final now = DateTime.now();
+      final currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
 
       final Map<String, dynamic> dataToSave = {
         'nom': _nomController.text.trim(),
@@ -637,6 +798,7 @@ class _AddChildFormState extends State<AddChildForm> {
         'telephone': cleanPhone,
         'photo_url': photoUrl,
         'niveau_classe': fullClassLevel,
+        'derniere_annee_promotion': currentAcademicYear,
       };
 
       if (widget.childData == null) {
@@ -1002,38 +1164,77 @@ class _AddChildFormState extends State<AddChildForm> {
                 onChanged: (val) {
                   setState(() {
                     _selectedDay = val;
-                    _selectedLevel = null;
                   });
                 },
-                validator: (val) => val == null ? 'Veuillez choisir un jour' : null,
+                validator: (val) => val == null ? 'Requis' : null,
               ),
               const SizedBox(height: 8),
 
-              DropdownButtonFormField<String>(
-                isDense: true,
-                isExpanded: true,
-                value: _selectedLevel,
-                dropdownColor: const Color(0xFF1E1E2C),
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                decoration: InputDecoration(
-                  isDense: true,
-                  labelText: 'Niveau de classe',
-                  labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                  prefixIcon: const Icon(Icons.school_rounded, color: Colors.deepPurpleAccent, size: 20),
-                  filled: true,
-                  fillColor: Colors.deepPurple.withOpacity(0.05),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                ),
-                items: _selectedDay == null
-                    ? []
-                    : _levelsMap[_selectedDay]!
-                    .map((level) => DropdownMenuItem(value: level, child: Text(level, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis)))
-                    .toList(),
-                onChanged: _selectedDay == null ? null : (val) => setState(() => _selectedLevel = val),
-                validator: (val) => val == null ? 'Veuillez choisir un niveau' : null,
+              Row(
+                children: [
+                  Expanded(
+                    flex: 1,
+                    child: DropdownButtonFormField<String>(
+                      isDense: true,
+                      isExpanded: true,
+                      value: _selectedCycle,
+                      dropdownColor: const Color(0xFF1E1E2C),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: 'Cycle',
+                        labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                        prefixIcon: const Icon(Icons.category_rounded, color: Colors.deepPurpleAccent, size: 20),
+                        filled: true,
+                        fillColor: Colors.deepPurple.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                      items: _cyclesList
+                          .map((cycle) => DropdownMenuItem(value: cycle, child: Text(cycle, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: (val) {
+                        setState(() {
+                          _selectedCycle = val;
+                          _selectedLevel = null; // On réinitialise la classe quand on change de cycle
+                        });
+                      },
+                      validator: (val) => val == null ? 'Requis' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    flex: 1,
+                    child: DropdownButtonFormField<String>(
+                      isDense: true,
+                      isExpanded: true,
+                      value: _selectedLevel,
+                      dropdownColor: const Color(0xFF1E1E2C),
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: 'Classe',
+                        labelStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                        prefixIcon: const Icon(Icons.school_rounded, color: Colors.deepPurpleAccent, size: 20),
+                        filled: true,
+                        fillColor: Colors.deepPurple.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.3))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2)),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                      items: _selectedCycle == null
+                          ? []
+                          : _classesParCycle[_selectedCycle]!
+                          .map((level) => DropdownMenuItem(value: level, child: Text(level, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: _selectedCycle == null ? null : (val) => setState(() => _selectedLevel = val),
+                      validator: (val) => val == null ? 'Requis' : null,
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 14),
 
