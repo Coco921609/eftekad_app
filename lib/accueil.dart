@@ -211,9 +211,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Récupération du prénom de l'utilisateur connecté pour afficher "Bonjour [Prénom]"
+    // Récupération des informations de l'utilisateur connecté
     final user = Supabase.instance.client.auth.currentUser;
     final prenomUser = user?.userMetadata?['prenom'] ?? '';
+    final userJour = user?.userMetadata?['jour'] as String?;
+    final rawClasses = user?.userMetadata?['classes'];
+    final List<String> userClasses = rawClasses != null ? List<String>.from(rawClasses) : [];
 
     return Scaffold(
       body: SafeArea(
@@ -358,7 +361,33 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     }
 
-                    final children = snapshot.data ?? [];
+                    final rawChildren = snapshot.data ?? [];
+
+                    // FILTRAGE STRICT PAR SERVITEUR ET RESPONSABLE DE FAMILLE
+                    final children = rawChildren.where((child) {
+                      final childNiveau = (child['niveau_classe'] as String?) ?? '';
+
+                      // 1. Filtrage par jour de caté (Samedi / Dimanche / Les deux)
+                      bool matchDay = false;
+                      if (userJour == 'Les deux') {
+                        matchDay = true;
+                      } else if (userJour != null && childNiveau.startsWith(userJour)) {
+                        matchDay = true;
+                      }
+
+                      if (!matchDay) return false;
+
+                      // 2. Filtrage par classe sélectionnée
+                      bool matchClass = false;
+                      for (final c in userClasses) {
+                        if (childNiveau.endsWith(c) || childNiveau.contains(' $c ')) {
+                          matchClass = true;
+                          break;
+                        }
+                      }
+
+                      return matchClass;
+                    }).toList();
 
                     if (children.isEmpty) {
                       return Padding(
@@ -370,7 +399,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               Icon(Icons.child_care_rounded, size: 64, color: Colors.grey.withOpacity(0.4)),
                               const SizedBox(height: 12),
                               const Text(
-                                'Aucun enfant ou jeune inscrit pour le moment.',
+                                'Aucun enfant inscrit pour vos classes attribuées.',
                                 style: TextStyle(color: Colors.grey, fontSize: 15),
                               ),
                             ],
