@@ -1276,8 +1276,23 @@ class PhoneInputFormatter extends TextInputFormatter {
       ) {
     String text = newValue.text;
 
+    if (text.isEmpty) {
+      return const TextEditingValue(
+        text: '+33',
+        selection: TextSelection.collapsed(offset: 3),
+      );
+    }
+
     if (!text.startsWith('+33')) {
-      text = '+33';
+      if (text.startsWith('0')) {
+        text = '+33$text';
+      } else {
+        text = '+33$text';
+      }
+    }
+
+    if (text.allMatches('+33').length > 1) {
+      text = '+33' + text.replaceAll('+33', '');
     }
 
     return TextEditingValue(
