@@ -211,6 +211,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Récupération du prénom de l'utilisateur connecté pour afficher "Bonjour [Prénom]"
+    final user = Supabase.instance.client.auth.currentUser;
+    final prenomUser = user?.userMetadata?['prenom'] ?? '';
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -226,6 +230,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          if (prenomUser.isNotEmpty) ...[
+                            Text(
+                              'Bonjour $prenomUser',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepPurpleAccent,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                          ],
                           const Text(
                             'Eftekad',
                             style: TextStyle(
@@ -586,11 +602,10 @@ class _AddChildFormState extends State<AddChildForm> {
   late final TextEditingController _codePostalController;
   late final TextEditingController _telephoneController;
 
-  // Plus aucune utilisation de "File" de dart:io. Uniquement les octets !
   Uint8List? _imageBytes;
   String? _selectedDay;
-  String? _selectedCycle; // Maternelle, Primaire, etc.
-  String? _selectedLevel; // PS, MS, CP, etc.
+  String? _selectedCycle;
+  String? _selectedLevel;
   bool _isLoading = false;
 
   String? _selectedBirthDay;
@@ -641,7 +656,6 @@ class _AddChildFormState extends State<AddChildForm> {
     String initialPhone = widget.childData?['telephone'] ?? '+33';
     _telephoneController = TextEditingController(text: initialPhone);
 
-    // Récupération intelligente du niveau et du cycle enregistré
     final niveauClasse = widget.childData?['niveau_classe'] as String?;
     if (niveauClasse != null && niveauClasse.isNotEmpty) {
       final parts = niveauClasse.split(' ');
@@ -652,7 +666,6 @@ class _AddChildFormState extends State<AddChildForm> {
           String foundCycle = '';
           String foundClass = rest;
 
-          // On vérifie si le cycle était déjà enregistré dans la base
           for (var cycle in _cyclesList) {
             if (rest.startsWith(cycle)) {
               foundCycle = cycle;
@@ -661,7 +674,6 @@ class _AddChildFormState extends State<AddChildForm> {
             }
           }
 
-          // Rétrocompatibilité (si la DB contient juste "Samedi PS")
           if (foundCycle.isEmpty) {
             foundCycle = _getCycleForClass(foundClass);
           }
@@ -1202,7 +1214,7 @@ class _AddChildFormState extends State<AddChildForm> {
                       onChanged: (val) {
                         setState(() {
                           _selectedCycle = val;
-                          _selectedLevel = null; // On réinitialise la classe quand on change de cycle
+                          _selectedLevel = null;
                         });
                       },
                       validator: (val) => val == null ? 'Requis' : null,

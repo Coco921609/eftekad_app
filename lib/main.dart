@@ -26,6 +26,9 @@ void main() async {
   // Comme les données sont enregistrées dans la base de données distante Supabase,
   // la suppression ou la désinstallation de l'application n'efface rien.
   // Tout est sauvegardé et sera automatiquement retrouvé au ré-alunissage de l'application.
+  // Quand première fois on ouvre l'application il y a la page login.screen pour créer un compte.
+  // Quand on y retourne la deuxième fois, ça affiche le mot de passe et le prénom pour se connecter.
+  // Si on supprime ou désinstalle l'application, cela n'efface rien sur les comptes.
   await Supabase.initialize(
     url: 'https://bubyzbpiyorabayivwtc.supabase.co',
     anonKey: 'sb_publishable_23t8sBj550cI58ZZs9XQmQ_rRHVKm2s',

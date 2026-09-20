@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'accueil.dart';
 import 'enfants.dart';
 import 'alerts.dart';
 import 'bilan.dart'; // Importation de la page Bilan
+import 'login_screen.dart'; // Importation de l'écran de connexion
 
 // Provider pour gérer la navigation par onglets avec historique pour le bouton retour
 class NavigationNotifier extends Notifier<int> {
@@ -92,7 +94,17 @@ class EftekadApp extends ConsumerWidget {
         ),
       ),
 
-      home: const MainScreen(),
+      // Écoute de l'état de connexion Supabase pour basculer entre LoginScreen et MainScreen
+      home: StreamBuilder<AuthState>(
+        stream: Supabase.instance.client.auth.onAuthStateChange,
+        builder: (context, snapshot) {
+          final session = Supabase.instance.client.auth.currentSession;
+          if (session == null) {
+            return const LoginScreen();
+          }
+          return const MainScreen();
+        },
+      ),
     );
   }
 }
