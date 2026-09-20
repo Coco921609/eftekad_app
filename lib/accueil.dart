@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -587,8 +586,8 @@ class _AddChildFormState extends State<AddChildForm> {
   late final TextEditingController _codePostalController;
   late final TextEditingController _telephoneController;
 
-  File? _imageFile;
-  Uint8List? _imageBytes; // Ajouté pour compatibilité Web (_Namespace) sans modifier le design
+  // Plus aucune utilisation de "File" de dart:io. Uniquement les octets !
+  Uint8List? _imageBytes;
   String? _selectedDay;
   String? _selectedCycle; // Maternelle, Primaire, etc.
   String? _selectedLevel; // PS, MS, CP, etc.
@@ -739,11 +738,6 @@ class _AddChildFormState extends State<AddChildForm> {
       final bytes = await pickedFile.readAsBytes();
       setState(() {
         _imageBytes = bytes;
-        try {
-          _imageFile = File(pickedFile.path);
-        } catch (_) {
-          _imageFile = null;
-        }
       });
     }
   }
@@ -772,14 +766,13 @@ class _AddChildFormState extends State<AddChildForm> {
     try {
       String? photoUrl = widget.childData?['photo_url'];
 
-      if (_imageBytes != null || _imageFile != null) {
+      if (_imageBytes != null) {
         final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
         final path = 'children_photos/$fileName';
-        final bytes = _imageBytes ?? await _imageFile!.readAsBytes();
 
         await Supabase.instance.client.storage
             .from('photos')
-            .uploadBinary(path, bytes);
+            .uploadBinary(path, _imageBytes!);
 
         photoUrl = Supabase.instance.client.storage
             .from('photos')
@@ -899,12 +892,10 @@ class _AddChildFormState extends State<AddChildForm> {
                         backgroundColor: Colors.grey[800],
                         backgroundImage: _imageBytes != null
                             ? MemoryImage(_imageBytes!)
-                            : (_imageFile != null
-                            ? FileImage(_imageFile!)
                             : (widget.childData?['photo_url'] != null && widget.childData!['photo_url'].isNotEmpty
                             ? NetworkImage(widget.childData!['photo_url']) as ImageProvider
-                            : null)),
-                        child: (_imageBytes == null && _imageFile == null && (widget.childData?['photo_url'] == null || widget.childData!['photo_url'].isEmpty))
+                            : null),
+                        child: (_imageBytes == null && (widget.childData?['photo_url'] == null || widget.childData!['photo_url'].isEmpty))
                             ? const Icon(Icons.add_a_photo_rounded, size: 26, color: Colors.white70)
                             : null,
                       ),
