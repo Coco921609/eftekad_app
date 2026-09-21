@@ -101,9 +101,28 @@ class EftekadApp extends ConsumerWidget {
         builder: (context, snapshot) {
           final session = Supabase.instance.client.auth.currentSession;
           if (session == null) {
-            return LoginScreen();
+            return const LoginScreen();
           }
-          return const MainScreen();
+
+          // Vérification en temps réel si le profil existe encore dans la base de données
+          // Si le compte a été supprimé d'un autre appareil (Samsung, Web, etc.), on force la déconnexion automatique
+          final user = session.user;
+          return StreamBuilder<List<Map<String, dynamic>>>(
+            stream: Supabase.instance.client
+                .from('profiles')
+                .stream(primaryKey: ['id'])
+                .eq('id', user.id),
+            builder: (context, profileSnapshot) {
+              if (profileSnapshot.hasData && profileSnapshot.data!.isEmpty) {
+                // Le profil n'existe plus (supprimé), on déconnecte proprement
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  Supabase.instance.client.auth.signOut();
+                });
+                return const LoginScreen();
+              }
+              return const MainScreen();
+            },
+          );
         },
       ),
     );
