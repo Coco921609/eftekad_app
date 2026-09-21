@@ -36,20 +36,31 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
       .stream(primaryKey: ['id'])
       .order('created_at', ascending: false);
 
+  final Stream<List<Map<String, dynamic>>> _profilesStream = Supabase
+      .instance.client
+      .from('profiles')
+      .stream(primaryKey: ['id'])
+      .order('nom', ascending: true);
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _selectedMonthIndex = now.month;
     _selectedYear = now.year < 2026 ? 2026 : (now.year > 2099 ? 2099 : now.year);
-    _checkAndApplySeptemberPromotion();
+
+    final user = Supabase.instance.client.auth.currentUser;
+    final roleUser = user?.userMetadata?['role'] ?? '';
+    final bool isChef = roleUser.toLowerCase().contains('chef');
+
+    if (!isChef) {
+      _checkAndApplySeptemberPromotion();
+    }
   }
 
-  /// Vérifie et applique le passage automatique de classe en rentrée de septembre
   Future<void> _checkAndApplySeptemberPromotion() async {
     try {
       final now = DateTime.now();
-      // On détermine l'année scolaire de rentrée (ex: septembre 2026 -> 2026, janvier 2027 -> 2026)
       final int currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
 
       final response = await Supabase.instance.client.from('enfants').select();
@@ -62,7 +73,6 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
         final String? fullLevel = child['niveau_classe'];
         final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
 
-        // Si l'enfant n'a pas encore été promu pour l'année scolaire actuelle
         if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
           final String newLevel = _getPromotedClassLevel(fullLevel);
 
@@ -72,24 +82,20 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
               'derniere_annee_promotion': currentAcademicYear,
             }).eq('id', id);
           } else {
-            // Même si pas de changement de classe (ex: déjà en Terminale), on met à jour l'année de vérification
             await Supabase.instance.client.from('enfants').update({
               'derniere_annee_promotion': currentAcademicYear,
             }).eq('id', id);
           }
         }
       }
-    } catch (_) {
-      // Gestion silencieuse
-    }
+    } catch (_) {}
   }
 
-  /// Calcule la classe supérieure en conservant le jour et ajustant le cycle si besoin
   String _getPromotedClassLevel(String currentFullLevel) {
     final parts = currentFullLevel.split(' ');
     if (parts.length < 2) return currentFullLevel;
 
-    final String day = parts[0]; // Samedi ou Dimanche
+    final String day = parts[0];
     String cycle = '';
     String level = '';
 
@@ -103,7 +109,6 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     String newCycle = cycle;
     String newLevel = level;
 
-    // MATERNELLE
     if (level == 'PS') {
       newLevel = 'MS';
       newCycle = 'Maternelle';
@@ -113,9 +118,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     } else if (level == 'GS') {
       newLevel = 'CP';
       newCycle = 'Primaire';
-    }
-    // PRIMAIRE
-    else if (level == 'CP') {
+    } else if (level == 'CP') {
       newLevel = 'CE1';
       newCycle = 'Primaire';
     } else if (level == 'CE1') {
@@ -130,9 +133,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     } else if (level == 'CM2') {
       newLevel = '6ème';
       newCycle = 'Collège';
-    }
-    // COLLÈGE
-    else if (level == '6ème') {
+    } else if (level == '6ème') {
       newLevel = '5ème';
       newCycle = 'Collège';
     } else if (level == '5ème') {
@@ -144,9 +145,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     } else if (level == '3ème') {
       newLevel = 'Seconde';
       newCycle = 'Lycée';
-    }
-    // LYCÉE
-    else if (level == 'Seconde') {
+    } else if (level == 'Seconde') {
       newLevel = 'Première';
       newCycle = 'Lycée';
     } else if (level == 'Première') {
@@ -199,7 +198,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     }).toList();
   }
 
-  Future<void> _sendMessage(String phoneNumber, String prenomEnfant, String absencesList) async {
+  Future<void> _sendMessage(String phoneNumber, String prenom, String absencesList) async {
     if (phoneNumber.isEmpty || phoneNumber == 'Non renseigné') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Numéro de téléphone invalide ou manquant.')),
@@ -237,9 +236,9 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     }
   }
 
-  Future<void> _saveJustificatif(Map<String, dynamic> child, String dateStr, String? text) async {
+  Future<void> _saveJustificatif(Map<String, dynamic> item, String dateStr, String? text, bool isChef) async {
     try {
-      Map<String, dynamic> currentJustifs = Map<String, dynamic>.from(child['justificatifs_absence'] ?? {});
+      Map<String, dynamic> currentJustifs = Map<String, dynamic>.from(item['justificatifs_absence'] ?? {});
 
       if (text == null || text.trim().isEmpty) {
         currentJustifs.remove(dateStr);
@@ -247,12 +246,14 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
         currentJustifs[dateStr] = text.trim();
       }
 
+      final tableName = isChef ? 'profiles' : 'enfants';
+
       await Supabase.instance.client
-          .from('enfants')
+          .from(tableName)
           .update({
         'justificatifs_absence': currentJustifs,
       })
-          .eq('id', child['id']);
+          .eq('id', item['id']);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -280,7 +281,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     }
   }
 
-  void _showJustificatifDialog(BuildContext context, Map<String, dynamic> child, String dateStr, String currentJustif) {
+  void _showJustificatifDialog(BuildContext context, Map<String, dynamic> item, String dateStr, String currentJustif, bool isChef) {
     final TextEditingController controller = TextEditingController(text: currentJustif);
 
     showDialog(
@@ -293,7 +294,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Écrire ou modifier le motif d\'absence de ${child['prenom'] ?? ''} :'),
+              Text('Écrire ou modifier le motif d\'absence de ${item['prenom'] ?? ''} :'),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
@@ -313,7 +314,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
                 style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
                 onPressed: () {
                   Navigator.pop(dialogContext);
-                  _saveJustificatif(child, dateStr, null);
+                  _saveJustificatif(item, dateStr, null, isChef);
                 },
                 child: const Text('Supprimer'),
               ),
@@ -328,7 +329,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
               ),
               onPressed: () {
                 Navigator.pop(dialogContext);
-                _saveJustificatif(child, dateStr, controller.text);
+                _saveJustificatif(item, dateStr, controller.text, isChef);
               },
               child: const Text('Valider'),
             ),
@@ -338,259 +339,554 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
     );
   }
 
-  Widget _buildDaySection(String dayName, List<Map<String, dynamic>> children) {
-    final filteredChildren = children.where((child) {
-      final niveauClasse = child['niveau_classe'] as String? ?? '';
-      final rawAbsences = List<dynamic>.from(child['dates_absence'] ?? []);
-      final filteredAbsences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
-      return niveauClasse.startsWith(dayName) && filteredAbsences.isNotEmpty;
-    }).toList();
+  Widget _buildDaySection(String dayName, List<Map<String, dynamic>> items, bool isChef) {
+    if (isChef) {
+      final filteredProfiles = items.where((profile) {
+        final role = (profile['role'] ?? '').toString().toLowerCase();
+        if (role.contains('chef')) return false; // Exclure le chef d'église
 
-    if (filteredChildren.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        child: Center(
-          child: Text(
-            'Aucune absence signalée pour le $dayName sur la période sélectionnée.',
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
-    }
+        final profileJour = (profile['jour'] ?? 'Samedi').toString();
+        final rawAbsences = List<dynamic>.from(profile['dates_absence'] ?? []);
+        final filteredAbsences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
 
-    final Map<String, List<Map<String, dynamic>>> levelsMap = {};
-    for (var child in filteredChildren) {
-      final niveauClasse = child['niveau_classe'] as String? ?? '';
-      final parts = niveauClasse.split(' ');
-      String level = parts.length > 1 ? parts.sublist(1).join(' ') : 'Non renseigné';
+        if (dayName == 'Les deux') {
+          return filteredAbsences.isNotEmpty;
+        }
+        return (profileJour.toLowerCase().contains(dayName.toLowerCase()) || profileJour == 'Les deux') && filteredAbsences.isNotEmpty;
+      }).toList();
 
-      levelsMap.putIfAbsent(level, () => []);
-      levelsMap[level]!.add(child);
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: levelsMap.entries.map((levelEntry) {
-        final levelName = levelEntry.key;
-        final levelChildren = levelEntry.value;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-              margin: const EdgeInsets.only(top: 8, bottom: 12),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Niveau : $levelName',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.redAccent,
-                ),
-              ),
+      if (filteredProfiles.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Center(
+            child: Text(
+              'Aucune absence signalée pour les serviteurs/responsables le $dayName sur la période sélectionnée.',
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+              textAlign: TextAlign.center,
             ),
-            ...levelChildren.map((child) {
-              final photoUrl = child['photo_url'] as String?;
-              final prenom = child['prenom'] ?? '';
-              final nom = child['nom'] ?? '';
-              final telephone = child['telephone'] ?? '';
-              final rawAbsences = List<dynamic>.from(child['dates_absence'] ?? []);
-              final absences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
-              final justifsMap = Map<String, dynamic>.from(child['justificatifs_absence'] ?? {});
+          ),
+        );
+      }
 
-              return Container(
-                margin: const EdgeInsets.symmetric(vertical: 8),
+      final Map<String, List<Map<String, dynamic>>> roleMap = {};
+      for (var profile in filteredProfiles) {
+        final role = profile['role'] ?? 'Serviteur';
+        roleMap.putIfAbsent(role, () => []);
+        roleMap[role]!.add(profile);
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: roleMap.entries.map((roleEntry) {
+          final roleName = roleEntry.key;
+          final roleProfiles = roleEntry.value;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                margin: const EdgeInsets.only(top: 8, bottom: 12),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+                  color: Colors.red.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Rôle : $roleName',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${roleProfiles.length} personne(s)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                     ),
                   ],
                 ),
-                child: Card(
-                  elevation: 1,
-                  margin: EdgeInsets.zero,
-                  shape: RoundedRectangleBorder(
+              ),
+              ...roleProfiles.map((profile) {
+                final photoUrl = profile['photo_url'] as String?;
+                final prenom = profile['prenom'] ?? '';
+                final nom = profile['nom'] ?? '';
+                final telephone = profile['telephone'] ?? '';
+                final rawAbsences = List<dynamic>.from(profile['dates_absence'] ?? []);
+                final absences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
+                final justifsMap = Map<String, dynamic>.from(profile['justificatifs_absence'] ?? {});
+                final classes = profile['classes'] != null ? (profile['classes'] as List).join(', ') : 'Aucune classe';
+
+                return Container(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white.withOpacity(0.1), width: 2),
-                              ),
-                              child: CircleAvatar(
-                                radius: 28,
-                                backgroundColor: Colors.grey[800],
-                                child: photoUrl != null && photoUrl.isNotEmpty
-                                    ? ClipOval(
-                                  child: Image.network(
-                                    '$photoUrl?v=${DateTime.now().millisecondsSinceEpoch}',
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return const Icon(Icons.person, color: Colors.white);
-                                    },
-                                    loadingBuilder: (context, childWidget, loadingProgress) {
-                                      if (loadingProgress == null) return childWidget;
-                                      return const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      );
-                                    },
-                                  ),
-                                )
-                                    : const Icon(Icons.person, color: Colors.white, size: 30),
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '$prenom $nom',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 17,
-                                      letterSpacing: 0.2,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Tél : ${telephone.isNotEmpty ? telephone : 'Non renseigné'}',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.grey.shade400,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          child: Divider(height: 1),
-                        ),
-
-                        // Liste des absences avec gestion du justificatif
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: absences.map((dateObj) {
-                            final dateStr = dateObj.toString();
-                            final justifText = justifsMap[dateStr]?.toString() ?? '';
-                            final hasJustif = justifText.isNotEmpty;
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8.0),
-                              child: Container(
-                                padding: const EdgeInsets.all(10),
+                  child: Card(
+                    elevation: 1,
+                    margin: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.red.withOpacity(0.08),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white.withOpacity(0.1), width: 2),
                                 ),
-                                child: Row(
+                                child: CircleAvatar(
+                                  radius: 28,
+                                  backgroundColor: Colors.grey[800],
+                                  child: photoUrl != null && photoUrl.isNotEmpty
+                                      ? ClipOval(
+                                    child: Image.network(
+                                      '$photoUrl?v=${DateTime.now().millisecondsSinceEpoch}',
+                                      width: 56,
+                                      height: 56,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return const Icon(Icons.person, color: Colors.white);
+                                      },
+                                      loadingBuilder: (context, childWidget, loadingProgress) {
+                                        if (loadingProgress == null) return childWidget;
+                                        return const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        );
+                                      },
+                                    ),
+                                  )
+                                      : const Icon(Icons.person, color: Colors.white, size: 30),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.calendar_today, size: 16, color: Colors.redAccent),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Absence du $dateStr',
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              color: Colors.redAccent,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          if (hasJustif) ...[
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              'Justificatif : $justifText',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontStyle: FontStyle.italic,
-                                                color: Colors.amber.shade200,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
+                                    Text(
+                                      '$prenom $nom',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 17,
+                                        letterSpacing: 0.2,
                                       ),
                                     ),
-                                    IconButton(
-                                      icon: Icon(
-                                        hasJustif ? Icons.edit_note : Icons.add_comment,
-                                        color: hasJustif ? Colors.orangeAccent : Colors.lightBlueAccent,
-                                        size: 22,
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Classes : $classes',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade300,
                                       ),
-                                      tooltip: hasJustif ? 'Modifier / Supprimer justificatif' : 'Ajouter justificatif',
-                                      onPressed: () => _showJustificatifDialog(context, child, dateStr, justifText),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Tél : ${telephone.isNotEmpty ? telephone : 'Non renseigné'}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey.shade400,
+                                      ),
                                     ),
                                   ],
                                 ),
                               ),
-                            );
-                          }).toList(),
-                        ),
+                            ],
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Divider(height: 1),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: absences.map((dateObj) {
+                              final dateStr = dateObj.toString();
+                              final justifText = justifsMap[dateStr]?.toString() ?? '';
+                              final hasJustif = justifText.isNotEmpty;
 
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () => _sendMessage(telephone, prenom, absences.join(", ")),
-                            icon: const Icon(Icons.send_rounded, size: 16),
-                            label: const Text('Envoyer message d\'absence'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.shade700,
-                              foregroundColor: Colors.white,
-                              elevation: 2,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.calendar_today, size: 16, color: Colors.redAccent),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Absence du $dateStr',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.redAccent,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            if (hasJustif) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Justificatif : $justifText',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontStyle: FontStyle.italic,
+                                                  color: Colors.amber.shade200,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          hasJustif ? Icons.edit_note : Icons.add_comment,
+                                          color: hasJustif ? Colors.orangeAccent : Colors.lightBlueAccent,
+                                          size: 22,
+                                        ),
+                                        tooltip: hasJustif ? 'Modifier / Supprimer justificatif' : 'Ajouter justificatif',
+                                        onPressed: () => _showJustificatifDialog(context, profile, dateStr, justifText, isChef),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _sendMessage(telephone, prenom, absences.join(", ")),
+                              icon: const Icon(Icons.send_rounded, size: 16),
+                              label: const Text('Envoyer message d\'absence'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                                elevation: 2,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            }),
-          ],
+                );
+              }),
+            ],
+          );
+        }).toList(),
+      );
+    } else {
+      final filteredChildren = items.where((child) {
+        final niveauClasse = child['niveau_classe'] as String? ?? '';
+        final rawAbsences = List<dynamic>.from(child['dates_absence'] ?? []);
+        final filteredAbsences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
+
+        if (dayName == 'Les deux') {
+          return (niveauClasse.startsWith('Samedi') || niveauClasse.startsWith('Dimanche')) && filteredAbsences.isNotEmpty;
+        }
+        return niveauClasse.startsWith(dayName) && filteredAbsences.isNotEmpty;
+      }).toList();
+
+      if (filteredChildren.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Center(
+            child: Text(
+              'Aucune absence signalée pour le $dayName sur la période sélectionnée.',
+              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+          ),
         );
-      }).toList(),
-    );
+      }
+
+      final Map<String, List<Map<String, dynamic>>> levelsMap = {};
+      for (var child in filteredChildren) {
+        final niveauClasse = child['niveau_classe'] as String? ?? '';
+        final parts = niveauClasse.split(' ');
+        String level = parts.length > 1 ? parts.sublist(1).join(' ') : 'Non renseigné';
+
+        levelsMap.putIfAbsent(level, () => []);
+        levelsMap[level]!.add(child);
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: levelsMap.entries.map((levelEntry) {
+          final levelName = levelEntry.key;
+          final levelChildren = levelEntry.value;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                margin: const EdgeInsets.only(top: 8, bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Niveau : $levelName',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${levelChildren.length} personne(s)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                    ),
+                  ],
+                ),
+              ),
+              ...levelChildren.map((child) {
+                final photoUrl = child['photo_url'] as String?;
+                final prenom = child['prenom'] ?? '';
+                final nom = child['nom'] ?? '';
+                final telephone = child['telephone'] ?? '';
+                final rawAbsences = List<dynamic>.from(child['dates_absence'] ?? []);
+                final absences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
+                final justifsMap = Map<String, dynamic>.from(child['justificatifs_absence'] ?? {});
+
+                return Container(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Card(
+                    elevation: 1,
+                    margin: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white.withOpacity(0.1), width: 2),
+                                ),
+                                child: CircleAvatar(
+                                  radius: 28,
+                                  backgroundColor: Colors.grey[800],
+                                  child: photoUrl != null && photoUrl.isNotEmpty
+                                      ? ClipOval(
+                                    child: Image.network(
+                                      '$photoUrl?v=${DateTime.now().millisecondsSinceEpoch}',
+                                      width: 56,
+                                      height: 56,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return const Icon(Icons.person, color: Colors.white);
+                                      },
+                                      loadingBuilder: (context, childWidget, loadingProgress) {
+                                        if (loadingProgress == null) return childWidget;
+                                        return const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        );
+                                      },
+                                    ),
+                                  )
+                                      : const Icon(Icons.person, color: Colors.white, size: 30),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '$prenom $nom',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 17,
+                                        letterSpacing: 0.2,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Tél : ${telephone.isNotEmpty ? telephone : 'Non renseigné'}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Divider(height: 1),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: absences.map((dateObj) {
+                              final dateStr = dateObj.toString();
+                              final justifText = justifsMap[dateStr]?.toString() ?? '';
+                              final hasJustif = justifText.isNotEmpty;
+
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.redAccent.withOpacity(0.3)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.calendar_today, size: 16, color: Colors.redAccent),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Absence du $dateStr',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.redAccent,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            if (hasJustif) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Justificatif : $justifText',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontStyle: FontStyle.italic,
+                                                  color: Colors.amber.shade200,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          hasJustif ? Icons.edit_note : Icons.add_comment,
+                                          color: hasJustif ? Colors.orangeAccent : Colors.lightBlueAccent,
+                                          size: 22,
+                                        ),
+                                        tooltip: hasJustif ? 'Modifier / Supprimer justificatif' : 'Ajouter justificatif',
+                                        onPressed: () => _showJustificatifDialog(context, child, dateStr, justifText, isChef),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _sendMessage(telephone, prenom, absences.join(", ")),
+                              icon: const Icon(Icons.send_rounded, size: 16),
+                              label: const Text('Envoyer message d\'absence'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                                elevation: 2,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          );
+        }).toList(),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+    final roleUser = user?.userMetadata?['role'] ?? '';
+    final bool isChef = roleUser.toLowerCase().contains('chef');
+
+    String alertMessage = 'Pour chaque absence d\'un serviteur ou d\'un responsable de famille, il faut envoyer un message afin de prendre de ses nouvelles.';
+    if (roleUser.toLowerCase().contains('serviteur')) {
+      alertMessage = 'Pour chaque absence d\'un enfant ou d\'un jeune, il faut envoyer un message afin de prendre de ses nouvelles, et en cas de situation très grave comme l\'hôpital, très malade, etc., il faut prévenir le responsable de la famille directement et ne surtout pas traîner en cas d\'urgence très grave.';
+    } else if (roleUser.toLowerCase().contains('responsable')) {
+      alertMessage = 'Pour chaque absence d\'un enfant ou d\'un jeune, il faut envoyer un message afin de prendre de ses nouvelles, et en cas de situation très grave comme l\'hôpital, très malade, etc., il faut prévenir chef d\'église directement et ne surtout pas traîner en cas d\'urgence très grave.';
+    }
+
+    final activeStream = isChef ? _profilesStream : _childrenStream;
+
     return Scaffold(
       body: SafeArea(
         child: StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _childrenStream,
+          stream: activeStream,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -605,7 +901,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
               );
             }
 
-            final children = snapshot.data ?? [];
+            final items = snapshot.data ?? [];
 
             return SingleChildScrollView(
               child: Padding(
@@ -669,9 +965,9 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: Colors.amber.withOpacity(0.3)),
                       ),
-                      child: const Text(
-                        'Pour chaque absence d\'un enfant ou d\'un jeune, il faut envoyer un message afin de prendre de ses nouvelles, et en cas de situation très grave comme l\'hôpital, très malade, etc., il faut prévenir le responsable de la famille directement et ne surtout pas traîner en cas d\'urgence très grave.',
-                        style: TextStyle(
+                      child: Text(
+                        alertMessage,
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Colors.amberAccent,
                           fontWeight: FontWeight.w500,
@@ -696,18 +992,18 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
                                   : Colors.grey.shade800,
                               foregroundColor: Colors.white,
                               elevation: 2,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             child: const Text(
                               'Samedi',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: ElevatedButton(
                             onPressed: () {
@@ -721,22 +1017,45 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
                                   : Colors.grey.shade800,
                               foregroundColor: Colors.white,
                               elevation: 2,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                             child: const Text(
                               'Dimanche',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedDay = 'Les deux';
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _selectedDay == 'Les deux'
+                                  ? Colors.deepPurple
+                                  : Colors.grey.shade800,
+                              foregroundColor: Colors.white,
+                              elevation: 2,
+                              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              'Les deux',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                             ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 16),
-
-                    // Filtres Année et Mois
                     Row(
                       children: [
                         Expanded(
@@ -814,7 +1133,7 @@ class _AlertsMainScreenState extends State<AlertsMainScreen> {
                     const SizedBox(height: 16),
                     const Divider(),
                     const SizedBox(height: 8),
-                    _buildDaySection(_selectedDay, children),
+                    _buildDaySection(_selectedDay, items, isChef),
                     const SizedBox(height: 16),
                   ],
                 ),

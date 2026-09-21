@@ -49,31 +49,61 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
   }
 
   /// Vérifie et applique le passage automatique de classe en rentrée de septembre
+  /// pour les enfants ET pour les profils (serviteurs/responsables).
   Future<void> _checkAndApplySeptemberPromotion() async {
     try {
       final now = DateTime.now();
       final int currentAcademicYear = now.month >= 9 ? now.year : now.year - 1;
 
+      // 1. Promotion automatique pour les enfants
       final response = await Supabase.instance.client.from('enfants').select();
-      if (response == null) return;
+      if (response != null) {
+        final List<dynamic> children = response as List<dynamic>;
 
-      final List<dynamic> children = response as List<dynamic>;
+        for (var child in children) {
+          final id = child['id'];
+          final String? fullLevel = child['niveau_classe'];
+          final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
 
-      for (var child in children) {
-        final id = child['id'];
-        final String? fullLevel = child['niveau_classe'];
-        final int lastPromotedYear = child['derniere_annee_promotion'] ?? 0;
+          if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
+            final String newLevel = _getPromotedClassLevel(fullLevel);
 
-        if (fullLevel != null && fullLevel.isNotEmpty && lastPromotedYear < currentAcademicYear) {
-          final String newLevel = _getPromotedClassLevel(fullLevel);
+            if (newLevel != fullLevel) {
+              await Supabase.instance.client.from('enfants').update({
+                'niveau_classe': newLevel,
+                'derniere_annee_promotion': currentAcademicYear,
+              }).eq('id', id);
+            } else {
+              await Supabase.instance.client.from('enfants').update({
+                'derniere_annee_promotion': currentAcademicYear,
+              }).eq('id', id);
+            }
+          }
+        }
+      }
 
-          if (newLevel != fullLevel) {
-            await Supabase.instance.client.from('enfants').update({
-              'niveau_classe': newLevel,
-              'derniere_annee_promotion': currentAcademicYear,
-            }).eq('id', id);
-          } else {
-            await Supabase.instance.client.from('enfants').update({
+      // 2. Promotion automatique pour les profils (serviteurs / responsables)
+      final responseProfiles = await Supabase.instance.client.from('profiles').select();
+      if (responseProfiles != null) {
+        final List<dynamic> profiles = responseProfiles as List<dynamic>;
+
+        for (var profile in profiles) {
+          final id = profile['id'];
+          final List<dynamic>? rawClasses = profile['classes'];
+          final int lastPromotedYear = profile['derniere_annee_promotion'] ?? 0;
+
+          if (rawClasses != null && rawClasses.isNotEmpty && lastPromotedYear < currentAcademicYear) {
+            List<String> updatedClasses = [];
+
+            for (var c in rawClasses) {
+              String promotedClass = _getPromotedSimpleClassLevel(c.toString());
+              if (!updatedClasses.contains(promotedClass)) {
+                updatedClasses.add(promotedClass);
+              }
+            }
+
+            await Supabase.instance.client.from('profiles').update({
+              'classes': updatedClasses,
               'derniere_annee_promotion': currentAcademicYear,
             }).eq('id', id);
           }
@@ -81,6 +111,28 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
       }
     } catch (_) {
       // Gestion silencieuse
+    }
+  }
+
+  /// Fonction utilitaire pour promouvoir un niveau simple (ex: 'CP' -> 'CE1') pour les profils
+  String _getPromotedSimpleClassLevel(String level) {
+    switch (level.trim()) {
+      case 'PS': return 'MS';
+      case 'MS': return 'GS';
+      case 'GS': return 'CP';
+      case 'CP': return 'CE1';
+      case 'CE1': return 'CE2';
+      case 'CE2': return 'CM1';
+      case 'CM1': return 'CM2';
+      case 'CM2': return '6ème';
+      case '6ème': return '5ème';
+      case '5ème': return '4ème';
+      case '4ème': return '3ème';
+      case '3ème': return 'Seconde';
+      case 'Seconde': return 'Première';
+      case 'Première': return 'Terminale';
+      case 'Terminale': return 'Terminale';
+      default: return level;
     }
   }
 
@@ -180,6 +232,7 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
@@ -200,6 +253,7 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
                               fontWeight: FontWeight.bold,
                               fontSize: 26,
                               letterSpacing: 0.5,
+                              color: Colors.white,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -233,11 +287,12 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.2,
+                    color: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Vous cliquez sur samedi et dimanche pour faire l\'appel des enfants ou des jeunes selon les jours du caté.',
+                  'Vous cliquez sur samedi, dimanche ou les deux pour faire l\'appel des enfants ou des jeunes selon les jours du caté.',
                   style: TextStyle(
                     fontSize: 11,
                     color: Colors.grey.shade400,
@@ -289,6 +344,29 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: () => _navigateToDay(context, 'Les deux'),
+                  style: ElevatedButton.styleFrom(
+                    elevation: 2,
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.calendar_today_rounded, size: 22),
+                      SizedBox(width: 14),
+                      Text(
+                        'Les deux',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.3),
+                      ),
+                      Spacer(),
+                      Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 24),
                 SizedBox(
                   height: 520,
@@ -296,10 +374,16 @@ class _EnfantsScreenState extends State<EnfantsScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Image.asset(
-                      'assets/image/marie.jpg',
+                      'assets/images/marie',
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
-                        return const SizedBox.shrink();
+                        return Image.asset(
+                          'assets/image/marie.jpg',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context2, error2, stackTrace2) {
+                            return const SizedBox.shrink();
+                          },
+                        );
                       },
                     ),
                   ),
@@ -387,10 +471,10 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
     }).toList();
   }
 
-  Future<void> _updateStatut(Map<String, dynamic> child, String dateStr, String type) async {
+  Future<void> _updateStatut(Map<String, dynamic> profile, String dateStr, String type) async {
     try {
-      List<dynamic> currentAbsences = List.from(child['dates_absence'] ?? []);
-      List<dynamic> currentPresences = List.from(child['dates_presence'] ?? []);
+      List<dynamic> currentAbsences = List.from(profile['dates_absence'] ?? []);
+      List<dynamic> currentPresences = List.from(profile['dates_presence'] ?? []);
 
       if (type == 'absence') {
         if (currentAbsences.contains(dateStr)) {
@@ -409,12 +493,12 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
       }
 
       await Supabase.instance.client
-          .from('enfants')
+          .from('profiles')
           .update({
         'dates_absence': currentAbsences,
         'dates_presence': currentPresences,
       })
-          .eq('id', child['id']);
+          .eq('id', profile['id']);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -440,7 +524,7 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
     }
   }
 
-  void _showStatutDialog(BuildContext context, Map<String, dynamic> child, String type) {
+  void _showStatutDialog(BuildContext context, Map<String, dynamic> profile, String type) {
     final now = DateTime.now();
     final targetMonth = _selectedMonthIndex == 0 ? now.month : _selectedMonthIndex;
     final targetYear = _selectedYear;
@@ -464,7 +548,7 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
 
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Text(isAbsence ? 'Gérer l\'absence : ${child['prenom'] ?? ''}' : 'Gérer la présence : ${child['prenom'] ?? ''}'),
+              title: Text(isAbsence ? 'Gérer l\'absence : ${profile['prenom'] ?? ''}' : 'Gérer la présence : ${profile['prenom'] ?? ''}'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -519,7 +603,7 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
                   ),
                   onPressed: () {
                     Navigator.pop(dialogContext);
-                    _updateStatut(child, formattedDate, type);
+                    _updateStatut(profile, formattedDate, type);
                   },
                   child: const Text('Valider'),
                 ),
@@ -531,12 +615,12 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
     );
   }
 
-  void _showModifierDialog(BuildContext context, Map<String, dynamic> child) {
+  void _showModifierDialog(BuildContext context, Map<String, dynamic> profile) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Modifier / Corriger : ${child['prenom'] ?? ''}'),
+        title: Text('Modifier / Corriger : ${profile['prenom'] ?? ''}'),
         content: const SingleChildScrollView(
           child: Text('Si vous vous êtes trompé entre absence et présence, choisissez l\'action à corriger :'),
         ),
@@ -549,7 +633,7 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
             style: OutlinedButton.styleFrom(foregroundColor: Colors.green),
             onPressed: () {
               Navigator.pop(context);
-              _showStatutDialog(context, child, 'presence');
+              _showStatutDialog(context, profile, 'presence');
             },
             child: const Text('Mettre Présent(e)'),
           ),
@@ -557,7 +641,7 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900, foregroundColor: Colors.white),
             onPressed: () {
               Navigator.pop(context);
-              _showStatutDialog(context, child, 'absence');
+              _showStatutDialog(context, profile, 'absence');
             },
             child: const Text('Mettre Absent(e)'),
           ),
@@ -566,12 +650,235 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
     );
   }
 
+  Widget _buildProfilesSection(String title, List<Map<String, dynamic>> profilesList) {
+    if (profilesList.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+          margin: const EdgeInsets.only(top: 10, bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.deepPurple.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.deepPurpleAccent,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${profilesList.length} personne(s)',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              ),
+            ],
+          ),
+        ),
+        ...profilesList.map((profile) {
+          final photoUrl = profile['photo_url'] as String?;
+          final rawAbsences = List<dynamic>.from(profile['dates_absence'] ?? []);
+          final rawPresences = List<dynamic>.from(profile['dates_presence'] ?? []);
+
+          final absences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
+          final presences = _filterDatesByMonthAndYear(rawPresences, _selectedMonthIndex, _selectedYear);
+
+          final telephone = profile['telephone'] ?? '';
+          final role = profile['role'] ?? 'Serviteur';
+          final classes = profile['classes'] != null ? (profile['classes'] as List).join(', ') : 'Aucune classe';
+
+          return Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Card(
+              elevation: 1,
+              margin: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white.withOpacity(0.15), width: 2),
+                          ),
+                          child: CircleAvatar(
+                            radius: 40,
+                            backgroundColor: Colors.grey[800],
+                            child: photoUrl != null && photoUrl.isNotEmpty
+                                ? ClipOval(
+                              child: Image.network(
+                                '$photoUrl?v=${DateTime.now().millisecondsSinceEpoch}',
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(Icons.person, color: Colors.white, size: 40);
+                                },
+                                loadingBuilder: (context, childWidget, loadingProgress) {
+                                  if (loadingProgress == null) return childWidget;
+                                  return const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  );
+                                },
+                              ),
+                            )
+                                : const Icon(Icons.person, color: Colors.white, size: 40),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${profile['prenom'] ?? ''} ${profile['nom'] ?? ''}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                  letterSpacing: 0.2,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Rôle : $role',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.deepPurpleAccent,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Classes : $classes',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade300,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Tél : ${telephone.isNotEmpty ? telephone : 'Non renseigné'}',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.grey.shade400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () => _showStatutDialog(context, profile, 'absence'),
+                          icon: const Icon(Icons.event_busy, size: 14),
+                          label: const Text('Absence', style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade900.withOpacity(0.7),
+                            foregroundColor: Colors.white,
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () => _showStatutDialog(context, profile, 'presence'),
+                          icon: const Icon(Icons.check_circle, size: 14),
+                          label: const Text('Présent(e)', style: TextStyle(fontSize: 12)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                            foregroundColor: Colors.white,
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _showModifierDialog(context, profile),
+                          icon: const Icon(Icons.edit, size: 14),
+                          label: const Text('Modifier', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.orangeAccent,
+                            side: const BorderSide(color: Colors.orangeAccent),
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Divider(height: 1),
+                    ),
+                    _buildInfoRow(
+                      Icons.calendar_today,
+                      absences.isEmpty
+                          ? 'Aucune absence enregistrée'
+                          : 'Absences : ${absences.join(", ")}',
+                      color: absences.isEmpty ? Colors.grey : Colors.redAccent,
+                      fontWeight: absences.isEmpty ? FontWeight.normal : FontWeight.bold,
+                    ),
+                    const SizedBox(height: 6),
+                    _buildInfoRow(
+                      Icons.check_circle_outline,
+                      presences.isEmpty
+                          ? 'Aucune présence enregistrée'
+                          : 'Présences : ${presences.join(", ")}',
+                      color: presences.isEmpty ? Colors.grey : Colors.greenAccent,
+                      fontWeight: presences.isEmpty ? FontWeight.normal : FontWeight.bold,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: StreamBuilder<List<Map<String, dynamic>>>(
-          stream: widget.childrenStream,
+          stream: Supabase.instance.client
+              .from('profiles')
+              .stream(primaryKey: ['id'])
+              .order('nom', ascending: true),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -586,11 +893,33 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
               );
             }
 
-            final children = snapshot.data ?? [];
-            final filteredChildren = children.where((child) {
-              final niveauClasse = child['niveau_classe'] as String? ?? '';
-              return niveauClasse.startsWith(widget.day);
+            final profiles = snapshot.data ?? [];
+            final filteredProfiles = profiles.where((p) {
+              final role = (p['role'] ?? '').toString().toLowerCase();
+              if (role.contains('chef d')) return false;
+
+              if (widget.day == 'Les deux') return true;
+              final pJour = (p['jour'] ?? '').toString();
+              return pJour.toLowerCase().contains(widget.day.toLowerCase());
             }).toList();
+
+            // 1. Liste des Serviteurs
+            final serviteurs = filteredProfiles
+                .where((p) => (p['role'] ?? '') == 'Serviteur')
+                .toList();
+
+            // 2. Liste des Responsables de famille (contient "Responsable", sans être adjoint)
+            final responsables = filteredProfiles
+                .where((p) =>
+            (p['role'] ?? '').toString().toLowerCase().contains('responsable') &&
+                !(p['role'] ?? '').toString().toLowerCase().contains('adjoint'))
+                .toList();
+
+            // 3. Liste des Adjoints chef (contient "Adjoint")
+            final adjoints = filteredProfiles
+                .where((p) =>
+                (p['role'] ?? '').toString().toLowerCase().contains('adjoint'))
+                .toList();
 
             return SingleChildScrollView(
               padding: const EdgeInsets.all(16),
@@ -600,15 +929,16 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
                   Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.arrow_back),
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
                         onPressed: () => Navigator.pop(context),
                       ),
                       Expanded(
                         child: Text(
-                          'Catéchiste - ${widget.day}',
+                          'Serviteurs / Responsables - ${widget.day}',
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
+                            color: Colors.white,
                           ),
                         ),
                       ),
@@ -693,17 +1023,17 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
                   const Divider(),
                   const SizedBox(height: 16),
 
-                  if (filteredChildren.isEmpty)
+                  if (filteredProfiles.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 40),
                       child: Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.child_care_rounded, size: 64, color: Colors.grey.withOpacity(0.4)),
+                            Icon(Icons.group_off_rounded, size: 64, color: Colors.grey.withOpacity(0.4)),
                             const SizedBox(height: 12),
                             Text(
-                              'Aucun enfant ou jeune inscrit pour le ${widget.day}.',
+                              'Aucun profil trouvé pour le ${widget.day}.',
                               style: const TextStyle(color: Colors.grey, fontSize: 15),
                               textAlign: TextAlign.center,
                             ),
@@ -711,206 +1041,13 @@ class _JourEnfantsScreenState extends State<JourEnfantsScreen> {
                         ),
                       ),
                     )
-                  else ...() {
-                    final Map<String, List<Map<String, dynamic>>> levelsMap = {};
-                    for (var child in filteredChildren) {
-                      final niveauClasse = child['niveau_classe'] as String? ?? '';
-                      final parts = niveauClasse.split(' ');
-                      String level = parts.length > 1 ? parts.sublist(1).join(' ') : 'Non renseigné';
-
-                      levelsMap.putIfAbsent(level, () => []);
-                      levelsMap[level]!.add(child);
-                    }
-
-                    return levelsMap.entries.map((levelEntry) {
-                      final levelName = levelEntry.key;
-                      final levelChildren = levelEntry.value;
-
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-                            margin: const EdgeInsets.only(top: 10, bottom: 12),
-                            decoration: BoxDecoration(
-                              color: Colors.deepPurple.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              'Niveau : $levelName',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.deepPurpleAccent,
-                              ),
-                            ),
-                          ),
-                          ...levelChildren.map((child) {
-                            final photoUrl = child['photo_url'] as String?;
-                            final rawAbsences = List<dynamic>.from(child['dates_absence'] ?? []);
-                            final rawPresences = List<dynamic>.from(child['dates_presence'] ?? []);
-
-                            final absences = _filterDatesByMonthAndYear(rawAbsences, _selectedMonthIndex, _selectedYear);
-                            final presences = _filterDatesByMonthAndYear(rawPresences, _selectedMonthIndex, _selectedYear);
-
-                            final telephone = child['telephone'] ?? '';
-
-                            return Container(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.04),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Card(
-                                elevation: 1,
-                                margin: EdgeInsets.zero,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Container(
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              border: Border.all(color: Colors.white.withOpacity(0.15), width: 2),
-                                            ),
-                                            child: CircleAvatar(
-                                              radius: 40,
-                                              backgroundColor: Colors.grey[800],
-                                              child: photoUrl != null && photoUrl.isNotEmpty
-                                                  ? ClipOval(
-                                                child: Image.network(
-                                                  '$photoUrl?v=${DateTime.now().millisecondsSinceEpoch}',
-                                                  width: 80,
-                                                  height: 80,
-                                                  fit: BoxFit.cover,
-                                                  errorBuilder: (context, error, stackTrace) {
-                                                    return const Icon(Icons.person, color: Colors.white, size: 40);
-                                                  },
-                                                  loadingBuilder: (context, childWidget, loadingProgress) {
-                                                    if (loadingProgress == null) return childWidget;
-                                                    return const SizedBox(
-                                                      width: 24,
-                                                      height: 24,
-                                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                                    );
-                                                  },
-                                                ),
-                                              )
-                                                  : const Icon(Icons.person, color: Colors.white, size: 40),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 14),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  '${child['prenom'] ?? ''} ${child['nom'] ?? ''}',
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 18,
-                                                    letterSpacing: 0.2,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  'Tél : ${telephone.isNotEmpty ? telephone : 'Non renseigné'}',
-                                                  style: TextStyle(
-                                                    fontSize: 13,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: Colors.grey.shade400,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 14),
-                                      Wrap(
-                                        spacing: 8,
-                                        runSpacing: 8,
-                                        children: [
-                                          ElevatedButton.icon(
-                                            onPressed: () => _showStatutDialog(context, child, 'absence'),
-                                            icon: const Icon(Icons.event_busy, size: 14),
-                                            label: const Text('Absence', style: TextStyle(fontSize: 12)),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.red.shade900.withOpacity(0.7),
-                                              foregroundColor: Colors.white,
-                                              visualDensity: VisualDensity.compact,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            ),
-                                          ),
-                                          ElevatedButton.icon(
-                                            onPressed: () => _showStatutDialog(context, child, 'presence'),
-                                            icon: const Icon(Icons.check_circle, size: 14),
-                                            label: const Text('Présent(e)', style: TextStyle(fontSize: 12)),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Colors.green.shade700,
-                                              foregroundColor: Colors.white,
-                                              visualDensity: VisualDensity.compact,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            ),
-                                          ),
-                                          OutlinedButton.icon(
-                                            onPressed: () => _showModifierDialog(context, child),
-                                            icon: const Icon(Icons.edit, size: 14),
-                                            label: const Text('Modifier', style: TextStyle(fontSize: 12)),
-                                            style: OutlinedButton.styleFrom(
-                                              foregroundColor: Colors.orangeAccent,
-                                              side: const BorderSide(color: Colors.orangeAccent),
-                                              visualDensity: VisualDensity.compact,
-                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const Padding(
-                                        padding: EdgeInsets.symmetric(vertical: 12),
-                                        child: Divider(height: 1),
-                                      ),
-                                      _buildInfoRow(
-                                        Icons.calendar_today,
-                                        absences.isEmpty
-                                            ? 'Aucune absence enregistrée'
-                                            : 'Absences : ${absences.join(", ")}',
-                                        color: absences.isEmpty ? Colors.grey : Colors.redAccent,
-                                        fontWeight: absences.isEmpty ? FontWeight.normal : FontWeight.bold,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      _buildInfoRow(
-                                        Icons.check_circle_outline,
-                                        presences.isEmpty
-                                            ? 'Aucune présence enregistrée'
-                                            : 'Présences : ${presences.join(", ")}',
-                                        color: presences.isEmpty ? Colors.grey : Colors.greenAccent,
-                                        fontWeight: presences.isEmpty ? FontWeight.normal : FontWeight.bold,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          }),
-                          const SizedBox(height: 12),
-                        ],
-                      );
-                    }).toList();
-                  }(),
+                  else ...[
+                    _buildProfilesSection('Liste des Serviteurs', serviteurs),
+                    const SizedBox(height: 16),
+                    _buildProfilesSection('Liste des Responsables de famille', responsables),
+                    const SizedBox(height: 16),
+                    _buildProfilesSection('Liste des Adjoints chef', adjoints),
+                  ],
                 ],
               ),
             );
