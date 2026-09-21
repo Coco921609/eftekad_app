@@ -36,7 +36,7 @@ class _ParametresScreenState extends State<ParametresScreen> {
     'Abouna Cherubim El Moharaki',
     'Abouna Bedaba El Moharaki',
     'Abouna Moussa Wahib',
-    'Abouna Yustus Anba Bishoy',
+    'Abouna Yolios Anba Bishoy',
     'Abouna Antoine Wahba',
     'Abouna Youhana Sadek',
     'Abouna Joseph Stefanos',

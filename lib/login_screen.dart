@@ -92,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
     'Abouna Cherubim El Moharaki',
     'Abouna Bedaba El Moharaki',
     'Abouna Moussa Wahib',
-    'Abouna Yustus Anba Bishoy',
+    'Abouna Yolios Anba Bishoy',
     'Abouna Antoine Wahba',
     'Abouna Youhana Sadek',
     'Abouna Joseph Stefanos',
